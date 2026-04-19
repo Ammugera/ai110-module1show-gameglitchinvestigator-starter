@@ -31,7 +31,30 @@ It wrote the code, ran away, and now the game is unplayable.
 
 ## 📸 Demo
 
-- [ ] [Insert a screenshot of your fixed, winning game here]
+![Fixed Game UI — Normal difficulty, dynamic range, all bugs resolved](demo_screenshot.png)
+
+### Bugs Fixed
+
+| Bug | What was broken | Fix |
+|-----|----------------|-----|
+| No range validation | `parse_guess()` accepted any integer (negatives, 9999, etc.) | Added `low`/`high` params; rejects out-of-range guesses with a clear error |
+| Invalid guesses consume attempts | `attempts += 1` ran before validation | Moved increment inside the valid-guess branch |
+| Hardcoded range text | Info bar always said "between 1 and 100" | Now uses dynamic `{low}` and `{high}` from difficulty |
+| Swapped hint messages | "Too High" said "📈 Go HIGHER!" | Corrected to "📉 Go LOWER!" (and vice versa) |
+| New Game didn't reset | Only reset `attempts` and `secret` | Now resets `status`, `score`, `history` too |
+
+### Run the fixed game
+
+```bash
+pip install -r requirements.txt
+python -m streamlit run app.py
+```
+
+### Run tests
+
+```bash
+python -m pytest tests/test_game_logic.py -v
+```
 
 ## 🚀 Stretch Features
 
