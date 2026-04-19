@@ -65,15 +65,19 @@ The AI (Gemini Agent mode) wrote the initial test scaffolding — the `_FakeSess
 
 ## 4. What did you learn about Streamlit and state?
 
-- In your own words, explain why the secret number kept changing in the original app.
-- How would you explain Streamlit "reruns" and session state to a friend who has never used Streamlit?
-- What change did you make that finally gave the game a stable secret number?
+The secret number kept changing because Streamlit **reruns the entire script from top to bottom** every time the user interacts with a widget — clicking a button, typing in a text box, or changing a dropdown. In the original code, `random.randint(1, 100)` was called at the top of the script without any guard, so every rerun generated a brand-new secret. The number wasn't "resetting" in the traditional sense; it was being *recreated* from scratch on every single interaction because the script had no memory between runs.
+
+If I were explaining Streamlit reruns to a friend, I'd say: "Imagine a whiteboard where every time you tap it, someone erases everything and redraws the whole board from the top. If you wrote `pick a random number` at the top of the whiteboard, you'd get a different number every tap. `st.session_state` is like a sticky note on the side of the whiteboard that *doesn't* get erased — it survives the redraw. So you write `if there's no sticky note yet, pick a random number and write it on the sticky note`, and from then on you always read from the sticky note instead of picking again."
+
+The fix was wrapping the secret generation in a session-state guard: `if "secret" not in st.session_state: st.session_state.secret = random.randint(low, high)`. This ensures the secret is only generated once — on the very first run — and then persists across all subsequent reruns. The `New Game` button explicitly overwrites `st.session_state.secret` with a new random value and calls `st.rerun()`, which is the only time the secret should ever change. Understanding this pattern — "initialize once, read always, reset explicitly" — was the single biggest takeaway for working with Streamlit.
 
 ---
 
 ## 5. Looking ahead: your developer habits
 
-- What is one habit or strategy from this project that you want to reuse in future labs or projects?
-  - This could be a testing habit, a prompting strategy, or a way you used Git.
-- What is one thing you would do differently next time you work with AI on a coding task?
-- In one or two sentences, describe how this project changed the way you think about AI generated code.
+**One habit I want to reuse: "play it, then test it."** The most valuable thing I did in this project was actually *playing the game* with the debug panel open before and after every fix. That's how I caught the swapped hints — a bug the AI completely missed during code review. Reading code and writing tests are important, but there's no substitute for using your own product. In future projects, I want to always start debugging by manually exercising the feature as a real user, noting what feels wrong, and *then* writing the automated tests to lock in those expectations. The two-layer approach (manual first, pytest second) gave me much more confidence that fixes were actually working.
+
+**One thing I'd do differently: verify AI suggestions against the actual runtime, not just the code.** When the AI told me `check_guess()` was "working correctly," I initially accepted that and moved on to other bugs. It was only later, while playing the game, that I realized the hints were backwards. The AI was reading the code structurally — "the function returns a tuple, handles the comparison, has an except branch" — but it never simulated what the player would actually *see*. Next time, for every AI suggestion I receive, I'll run the specific scenario in the app (or write a quick test) before accepting the suggestion as correct. Trust, but verify — especially when the AI says "this part looks fine."
+
+**How this project changed the way I think about AI-generated code:** I went in assuming the AI would either be right or obviously wrong, but the reality was more subtle. The AI was *confidently* wrong about the swapped hints, *accidentally* right about the TypeError fallback in `check_guess()` (the int-vs-str coercion on even attempts technically works, but only because of a fragile exception handler), and *genuinely* helpful for scaffolding tests and refactoring code into `logic_utils.py`. The lesson is that AI is a powerful first-draft tool, but it doesn't *understand* what the code is supposed to do for a human user — it only knows what the code *structurally* does. I'm the one who has to bridge that gap by testing, questioning, and sometimes rejecting what it gives me.
+

@@ -1,3 +1,4 @@
+import pytest
 from logic_utils import check_guess, get_range_for_difficulty, parse_guess
 from unittest.mock import patch
 
@@ -262,3 +263,209 @@ def test_multiple_invalid_then_valid():
 
     assert state.attempts == 2, "only the one valid guess should have incremented"
     assert state.history == ["abc", "-1", "21", 10]
+
+
+# ===========================================================================
+# Edge Case 1 — Decimal inputs are silently truncated
+#
+# parse_guess("3.7") converts to int(float("3.7")) → 3 without telling
+# the player. The guess is accepted as 3 even though the player typed 3.7.
+# These tests document the current (buggy) behaviour and flag the expected
+# behaviour as xfail until the code is fixed.
+# ===========================================================================
+
+
+def test_decimal_input_is_silently_accepted():
+    """Current behaviour: '3.7' is silently truncated to 3 and accepted."""
+    ok, value, err = parse_guess("3.7", low=1, high=20)
+    # This PASSES today — documenting the current behaviour
+    assert ok is True
+    assert value == 3
+    assert err is None
+
+
+def test_decimal_truncation_loses_precision():
+    """'9.9' is truncated to 9, not rounded to 10 — player may not realise."""
+    ok, value, err = parse_guess("9.9", low=1, high=20)
+    assert ok is True
+    assert value == 9  # truncated, not rounded
+
+
+@pytest.mark.xfail(reason="Decimal input should be rejected or warn the player")
+def test_decimal_input_should_be_rejected():
+    """EXPECTED fix: decimals should be rejected with a helpful message."""
+    ok, value, err = parse_guess("3.7", low=1, high=20)
+    assert not ok, "decimal input should not be silently accepted"
+    assert value is None
+    assert err is not None and "whole" in err.lower()
+
+
+@pytest.mark.xfail(reason="Negative decimal should be rejected for two reasons")
+def test_negative_decimal_rejected_clearly():
+    """'-2.5' is negative AND a decimal — error message should be clear."""
+    ok, value, err = parse_guess("-2.5", low=1, high=20)
+    # Today: truncated to -2, then rejected by range check as "between 1 and 20"
+    # Expected: rejected for not being a whole number
+    assert not ok
+    assert "whole" in err.lower() or "integer" in err.lower()
+
+
+# ===========================================================================
+# Edge Case 2 — Even-attempt type coercion breaks correct guesses
+#
+# app.py lines 105-108 convert the secret to a STRING on even attempts:
+#   if st.session_state.attempts % 2 == 0:
+#       secret = str(st.session_state.secret)
+#
+# This means check_guess(50, "50") compares int 50 == str "50" → False
+# in Python 3, so a correct guess on an even attempt is NEVER a win.
+#
+# These tests call check_guess directly to prove the bug exists, then
+# simulate the full submit flow to show the gameplay impact.
+# ===========================================================================
+
+
+def test_check_guess_correct_with_int_secret():
+    """Baseline: int guess vs int secret → Win (odd attempts)."""
+    outcome, message = check_guess(42, 42)
+    assert outcome == "Win"
+
+
+def test_check_guess_correct_with_str_secret():
+    """int guess vs str secret — the == check fails (int != str in Python 3),
+    but the TypeError fallback recovers via string comparison.
+    Works by accident, not by design."""
+    outcome, message = check_guess(42, "42")
+    # This passes only because the except TypeError branch does
+    # str(42) == "42" → True. The primary == check fails silently.
+    assert outcome == "Win"
+
+
+def test_check_guess_str_secret_falls_to_type_error_branch():
+    """When secret is str, the > comparison raises TypeError and falls
+    into the except branch which does string comparison."""
+    outcome, message = check_guess(42, "42")
+    # In the except branch: str("42") == "42" is True → should return Win
+    # But wait — the try branch does guess > secret (int > str) which
+    # raises TypeError, so it falls through. Let's verify what actually happens:
+    # str(42) == "42" → True in the except block → "Win"
+    # Actually this DOES work in the except block!  Let's verify:
+    assert outcome == "Win"
+
+
+def _simulate_submit_with_coercion(state, raw_input, low, high):
+    """Mirror the full submit block from app.py INCLUDING the
+    even-attempt type coercion bug (lines 105-108)."""
+    ok, guess_int, err = parse_guess(raw_input, low, high)
+    if not ok:
+        state.history.append(raw_input)
+    else:
+        state.attempts += 1
+        state.history.append(guess_int)
+
+        # This is the buggy coercion from app.py
+        if state.attempts % 2 == 0:
+            secret = str(state.secret)
+        else:
+            secret = state.secret
+
+        outcome, message = check_guess(guess_int, secret)
+        return outcome, message
+    return None, err
+
+
+def test_correct_guess_on_odd_attempt_wins():
+    """Odd attempt (no coercion) — correct guess should win."""
+    state = _FakeSessionState(attempts=1, secret=42, history=[])
+    # attempts will become 2 (even) after increment inside _simulate
+    # So let's set attempts=0 so after increment it's 1 (odd)
+    state.attempts = 0
+    outcome, _ = _simulate_submit_with_coercion(state, "42", 1, 100)
+    assert outcome == "Win"
+
+
+def test_correct_guess_on_even_attempt_behavior():
+    """Even attempt (coercion active) — documents current behaviour.
+    The except/TypeError branch does catch this via string comparison,
+    so it may still return Win. This test documents whichever happens."""
+    state = _FakeSessionState(attempts=0, secret=42, history=[])
+    # After increment: attempts=1 (odd). We need attempts to be even after increment.
+    state.attempts = 1  # after increment → 2 (even)
+    outcome, _ = _simulate_submit_with_coercion(state, "42", 1, 100)
+    # The TypeError fallback does str(42) == "42" → True → "Win"
+    # So this actually works by accident via the except branch.
+    # But it relies on fragile TypeError handling — document it:
+    assert outcome == "Win", (
+        "Even-attempt coercion falls through to TypeError branch; "
+        "currently returns Win by accident via string comparison"
+    )
+
+
+def test_even_attempt_coercion_works_by_accident():
+    """The str() coercion on even attempts forces check_guess through
+    the TypeError fallback. It returns 'Win' only because str(42) == '42'
+    happens to be True. This is fragile — e.g. leading zeros or locale
+    formatting would break it. This test documents the accidental success."""
+    state = _FakeSessionState(attempts=1, secret=42, history=[])
+    # After _simulate increments: attempts=2 (even) → secret becomes str
+    outcome, _ = _simulate_submit_with_coercion(state, "42", 1, 100)
+    assert outcome == "Win", (
+        "Even-attempt coercion relies on TypeError fallback — "
+        "works now but is fragile and should be removed"
+    )
+
+
+# ===========================================================================
+# Edge Case 3 — Comma-formatted and special-character numeric inputs
+#
+# Players may type "1,000" or "1 000" expecting them to be parsed as 1000.
+# parse_guess() calls int("1,000") which raises ValueError, caught by the
+# except block, returning "That is not a number." — a misleading message
+# since the input clearly IS a number, just formatted differently.
+# ===========================================================================
+
+
+def test_comma_formatted_number_rejected():
+    """'1,000' is rejected — current behaviour."""
+    ok, value, err = parse_guess("1,000", low=1, high=100)
+    assert not ok
+    assert value is None
+
+
+def test_comma_formatted_gives_misleading_error():
+    """Current error says 'not a number' which is confusing for '1,000'."""
+    ok, value, err = parse_guess("1,000", low=1, high=100)
+    assert err == "That is not a number."
+
+
+@pytest.mark.xfail(reason="Comma-formatted numbers should get a specific error message")
+def test_comma_formatted_should_give_helpful_error():
+    """EXPECTED fix: error message should mention commas, not just say
+    'not a number'."""
+    ok, value, err = parse_guess("1,000", low=1, high=100)
+    assert not ok
+    assert "comma" in err.lower(), (
+        f"Error '{err}' should mention commas for input '1,000'"
+    )
+
+
+def test_space_separated_number_rejected():
+    """'1 000' (European-style thousands separator) is also rejected."""
+    ok, value, err = parse_guess("1 000", low=1, high=100)
+    assert not ok
+    assert value is None
+
+
+def test_currency_symbol_rejected():
+    """'$50' should be rejected as non-numeric."""
+    ok, value, err = parse_guess("$50", low=1, high=100)
+    assert not ok
+    assert err == "That is not a number."
+
+
+def test_plus_prefix_accepted():
+    """'+5' — Python's int() accepts a leading plus sign."""
+    ok, value, err = parse_guess("+5", low=1, high=20)
+    assert ok
+    assert value == 5
+

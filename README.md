@@ -25,9 +25,22 @@ It wrote the code, ran away, and now the game is unplayable.
 
 ## 📝 Document Your Experience
 
-- [ ] Describe the game's purpose.
-- [ ] Detail which bugs you found.
-- [ ] Explain what fixes you applied.
+- [x] **Game's purpose:** This is a Streamlit-based number guessing game where the player picks a difficulty (Easy, Normal, or Hard), and the app generates a secret number within that difficulty's range. The player types guesses into a text input and receives directional hints ("Go HIGHER!" / "Go LOWER!") until they either guess correctly or run out of attempts. A score tracks performance across guesses.
+
+- [x] **Bugs found:**
+  1. **No range validation** — `parse_guess()` accepted any integer, including negatives and numbers far above the difficulty ceiling.
+  2. **Invalid guesses consumed attempts** — The attempt counter incremented *before* the input was validated, so typing garbage or out-of-range values wasted turns.
+  3. **Hardcoded range text** — The info bar always said "between 1 and 100" regardless of the selected difficulty.
+  4. **Swapped hint messages** — Guessing too high showed "📈 Go HIGHER!" (should say go lower) and vice versa.
+  5. **New Game didn't fully reset** — Only `attempts` and `secret` were reset; `status`, `score`, and `history` were left stale, locking the player on the game-over screen.
+
+- [x] **Fixes applied:**
+  1. Added `low` and `high` parameters to `parse_guess()` with a bounds check that returns `"Guess must be between {low} and {high}."` for out-of-range values.
+  2. Moved `st.session_state.attempts += 1` inside the `else` (valid-guess) branch so only accepted guesses count.
+  3. Changed the info string to use `f"Guess a number between {low} and {high}."`.
+  4. Swapped the emoji and text in `check_guess()` so "Too High" → "📉 Go LOWER!" and "Too Low" → "📈 Go HIGHER!".
+  5. Updated the `if new_game:` block to reset all five session-state keys (`attempts`, `score`, `history`, `status`, `secret`).
+  6. Refactored all pure game logic into `logic_utils.py` and wrote 19 pytest cases in `tests/test_game_logic.py`.
 
 ## 📸 Demo
 
@@ -55,6 +68,8 @@ python -m streamlit run app.py
 ```bash
 python -m pytest tests/test_game_logic.py -v
 ```
+
+![Pytest results — 32 passed, 3 xfailed](pytest_results.png)
 
 ## 🚀 Stretch Features
 
